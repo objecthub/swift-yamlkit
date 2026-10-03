@@ -37,6 +37,10 @@ targets: [
 
 ## Usage
 
+The examples below give a quick overview. [USAGE.md](USAGE.md) explains the main use cases in
+more depth: decoding and encoding strategies, error handling, working with node trees, custom
+schemas, and streaming with events.
+
 ### Decoding
 
 ```swift
