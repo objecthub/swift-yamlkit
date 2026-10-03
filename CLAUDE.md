@@ -11,6 +11,7 @@ swift test                                   # all tests (~2 s)
 swift test --filter YAMLTestSuiteTests       # conformance only
 swift test --filter "Round trips"            # randomized Codable round trips
 xcodebuild -scheme swift-yamlkit -destination 'generic/platform=iOS Simulator' build -quiet
+xcodebuild test -scheme swift-yamlkit -destination 'platform=macOS'   # tests via Xcode's build system
 xcodebuild docbuild -scheme swift-yamlkit -destination 'generic/platform=macOS'   # must stay warning-free
 Scripts/build-documentation.sh archive       # DocC without Xcode → .build/YamlKit.doccarchive
 Scripts/build-documentation.sh site swift-yamlkit   # static website → .build/docs-site (arg = hosting base path)
@@ -20,11 +21,29 @@ Scripts/update-yaml-test-suite.sh [data-YYYY-MM-DD]   # refresh vendored test su
 
 The Xcode scheme is `swift-yamlkit` (not `YamlKit`).
 
+### Xcode
+
+There is deliberately **no `.xcodeproj`**: Xcode opens `Package.swift` directly (`xed .`), and
+`Package.swift` is the single source of truth for targets, platforms, and resources — never add a
+project file that duplicates it. The shared scheme lives in
+`.swiftpm/xcode/xcshareddata/xcschemes/swift-yamlkit.xcscheme` (builds `YamlKit`, tests
+`YamlKitTests`, code coverage for `YamlKit`). `.gitignore` excludes everything in `.swiftpm/` except
+`xcode/xcshareddata`, so user state and `.swiftpm/configuration` stay untracked. If you add targets,
+add them to that scheme as well. Tests pass under both `swift test` and
+`xcodebuild test -scheme swift-yamlkit -destination 'platform=macOS'` (or an iOS Simulator, see
+`xcodebuild -scheme swift-yamlkit -showdestinations`); test resources are loaded via `Bundle.module`,
+which works in both. `xcrun xccov` currently fails to read the coverage archive of this Xcode
+version; use Xcode's Report navigator to view coverage.
+
 `Scripts/build-documentation.sh` needs no Xcode and no `swift-docc-plugin` dependency (keep the package
-dependency-free): it runs `swift build` with `-emit-symbol-graph` into a separate scratch path
-(`.build/docs`, so the module is recompiled and the graph is always emitted) and then
+dependency-free): it runs `swift package dump-symbol-graph --minimum-access-level public` (scratch path
+`.build/docs`), takes the output directory from the printed `Files written to …` line (it differs between
+SwiftPM versions), copies only `YamlKit*.symbols.json` into `.build/symbol-graphs`, and then runs
 `docc convert … --additional-symbol-graph-dir .build/symbol-graphs`; `docc` is taken from the `PATH` or
 `xcrun --find docc`. `site` mode adds `--transform-for-static-hosting` and `--hosting-base-path`.
+Don't go back to `swift build -Xswiftc -emit-symbol-graph`: it only emits a graph when the module is
+recompiled, so a second run produced no graph and every symbol link failed ("doesn't exist at …").
+If DocC reports many "doesn't exist" / "No symbol matched 'YamlKit'" warnings, the symbol graph is missing.
 When adding DocC articles, also list them in the Topics of `Documentation.docc/YamlKit.md` and keep the
 README's Documentation section in sync with the script.
 

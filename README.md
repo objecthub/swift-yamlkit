@@ -181,8 +181,9 @@ domain. Copy the contents of `.build/docs-site` to the web server (for GitHub Pa
 The script performs these steps, which can also be run by hand:
 
 ```sh
-swift build --target YamlKit --scratch-path .build/docs \
-  -Xswiftc -emit-symbol-graph -Xswiftc -emit-symbol-graph-dir -Xswiftc "$PWD/.build/symbol-graphs"
+swift package dump-symbol-graph --minimum-access-level public
+# prints "Files written to <directory>"; copy <directory>/YamlKit*.symbols.json
+# into a separate directory, e.g. .build/symbol-graphs
 docc convert Sources/YamlKit/Documentation.docc \
   --fallback-display-name YamlKit --fallback-bundle-identifier org.objecthub.YamlKit \
   --additional-symbol-graph-dir .build/symbol-graphs \
@@ -191,6 +192,31 @@ docc convert Sources/YamlKit/Documentation.docc \
 ```
 
 On macOS, use `xcrun docc` if `docc` is not on the `PATH`.
+
+## Development with Xcode
+
+YamlKit is a plain Swift package; there is no separate Xcode project. Open the package
+directly in Xcode:
+
+```sh
+xed .        # or: open Package.swift, or File ▸ Open… and select the package folder
+```
+
+Select the shared `swift-yamlkit` scheme (it is versioned in
+`.swiftpm/xcode/xcshareddata/xcschemes`) and a destination such as *My Mac* or an iOS
+Simulator. Then use Product ▸ Build (⌘B), Product ▸ Test (⌘U), the Test navigator to run
+individual tests or test-suite cases, and Product ▸ Build Documentation (⌃⇧⌘D). Code coverage
+for the `YamlKit` target is enabled in the scheme and shown in the Report navigator.
+
+Changes to targets, platforms, or resources are made in `Package.swift`; Xcode picks them up
+automatically. The same scheme works from the command line:
+
+```sh
+xcodebuild test -scheme swift-yamlkit -destination 'platform=macOS'
+xcodebuild test -scheme swift-yamlkit -destination 'platform=iOS Simulator,name=<simulator name>'
+```
+
+`xcodebuild -scheme swift-yamlkit -showdestinations` lists the available simulators.
 
 ## Testing
 

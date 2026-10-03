@@ -61,8 +61,11 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
-# Swift Package Manager / Xcode
-.swiftpm/
+# Swift Package Manager / Xcode: keep only the shared Xcode schemes
+.swiftpm/*
+!.swiftpm/xcode
+.swiftpm/xcode/*
+!.swiftpm/xcode/xcshareddata
 
 # DocC preview output
 .docc-build/

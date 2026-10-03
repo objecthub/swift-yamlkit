@@ -1,7 +1,8 @@
 #!/bin/sh
 #
 # Builds the DocC documentation of YamlKit without Xcode, using SwiftPM to
-# extract the symbol graph and the `docc` tool of the Swift toolchain.
+# extract the symbol graph (`swift package dump-symbol-graph`) and the `docc`
+# tool of the Swift toolchain.
 #
 # Usage:
 #   Scripts/build-documentation.sh [archive|site|preview] [hosting-base-path]
@@ -34,14 +35,21 @@ else
   exit 1
 fi
 
-# Extract the symbol graph of the public API. A separate scratch path ensures
-# that the module is compiled (and the symbol graph emitted) even if the
-# regular build is up to date.
+# Extract the symbol graph of the public API. `dump-symbol-graph` builds the
+# module if needed and always (re)generates the graph, also when the build is
+# up to date. Its output directory depends on the SwiftPM version, hence it is
+# taken from the command's output; only the YamlKit graphs are used.
 rm -rf "$SYMBOL_GRAPHS"
 mkdir -p "$SYMBOL_GRAPHS"
-swift build --package-path "$ROOT" --target YamlKit --scratch-path "$ROOT/.build/docs" \
-  -Xswiftc -emit-symbol-graph \
-  -Xswiftc -emit-symbol-graph-dir -Xswiftc "$SYMBOL_GRAPHS"
+OUTPUT="$(swift package --package-path "$ROOT" --scratch-path "$ROOT/.build/docs" \
+  dump-symbol-graph --minimum-access-level public)"
+GRAPH_DIR="$(printf '%s\n' "$OUTPUT" | sed -n 's/^Files written to //p' | tail -n 1)"
+if [ -z "$GRAPH_DIR" ] || ! ls "$GRAPH_DIR"/YamlKit*.symbols.json >/dev/null 2>&1; then
+  printf '%s\n' "$OUTPUT" >&2
+  echo "error: no symbol graph was generated for YamlKit" >&2
+  exit 1
+fi
+cp "$GRAPH_DIR"/YamlKit*.symbols.json "$SYMBOL_GRAPHS"/
 
 set -- --fallback-display-name YamlKit \
        --fallback-bundle-identifier org.objecthub.YamlKit \
