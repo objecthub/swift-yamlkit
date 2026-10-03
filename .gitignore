@@ -60,3 +60,9 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Swift Package Manager / Xcode
+.swiftpm/
+
+# DocC preview output
+.docc-build/
