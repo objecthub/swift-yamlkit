@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for working on **YamlKit** (`swift-yamlkit`): a dependency-free YAML 1.2.2 parser/emitter
+Guidance for working on **YamlKit** (`swift-yamlkit`): a YAML 1.2.2 parser/emitter without runtime dependencies
 with `Codable` support (`YAMLDecoder`/`YAMLEncoder`) for macOS 13+ / iOS 16+, Swift 6 language mode.
 
 ## Commands
@@ -35,8 +35,7 @@ add them to that scheme as well. Tests pass under both `swift test` and
 which works in both. `xcrun xccov` currently fails to read the coverage archive of this Xcode
 version; use Xcode's Report navigator to view coverage.
 
-`Scripts/build-documentation.sh` needs no Xcode and no `swift-docc-plugin` dependency (keep the package
-dependency-free): it runs `swift package dump-symbol-graph --minimum-access-level public` (scratch path
+`Scripts/build-documentation.sh` needs no Xcode and no `swift-docc-plugin` dependency (don't add one): it runs `swift package dump-symbol-graph --minimum-access-level public` (scratch path
 `.build/docs`), takes the output directory from the printed `Files written to …` line (it differs between
 SwiftPM versions), copies only `YamlKit*.symbols.json` into `.build/symbol-graphs`, and then runs
 `docc convert … --additional-symbol-graph-dir .build/symbol-graphs`; `docc` is taken from the `PATH` or
@@ -90,7 +89,10 @@ Swift Testing (`@Test`, `#expect`), parameterized where useful. Layout mirrors t
 - **Conformance** (`Conformance/YAMLTestSuiteTests.swift`) runs for every vendored case of
   `Tests/YamlKitTests/Resources/yaml-test-suite/<ID>[/<NN>]/` (`in.yaml`, `test.event`, `in.json`, `error`, …):
   1. events formatted by `EventFormatter` must equal `test.event`; `error` cases must throw;
-  2. composed nodes must equal `in.json` (parsed by the test-only `JSONValue` stream parser);
+  2. composed nodes must equal `in.json`. JSON is handled with DynamicJSON's `JSON` type
+     (`Conformance/JSONSupport.swift`): `JSON.parseStream` splits multi-document `in.json` streams into
+     single values for `JSON(string:)`, `JSON(_: YAMLNode)` converts nodes by tag, and
+     `withNormalizedNumbers` makes `.integer`/`.float` compare numerically;
   3. emit → re-parse must give equal *normalized* events (`normalize`: ignores doc markers, collection
      styles, and scalar style except for untagged plain scalars not resolving to `!!str`);
   4. serialize nodes → re-parse must give equal nodes.
@@ -130,6 +132,8 @@ build it with `-c release` and run ~10⁶ iterations after emitter changes.
 - Every public declaration gets a `///` doc comment; DocC must build without warnings
   (overloaded symbol links need disambiguation, e.g. ``YAML/parseEvents(_:)-(String)``).
 - All public types are `Sendable`; no force unwraps in library code except type-checked `as!` after `is`.
-- No external dependencies.
+- No runtime dependencies: the `YamlKit` target must only use the standard library and Foundation.
+  Test-only dependencies are acceptable (currently `swift-dynamicjson` for the `YamlKitTests` target);
+  SwiftPM does not fetch them for packages that depend on YamlKit.
 - Errors: throw `YAMLError(kind, message, at: mark)` with the most precise `Mark` available.
 - The vendored test suite is data under MIT license (`Resources/yaml-test-suite/LICENSE`); don't edit it by hand.

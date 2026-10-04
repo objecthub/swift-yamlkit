@@ -13,7 +13,7 @@ for working with YAML node trees and event streams.
 - Anchors and aliases, multi-document streams, `%YAML`/`%TAG` directives, optional merge keys
 - UTF-8, UTF-16, and UTF-32 input with automatic encoding detection
 - Protection against malicious input ("billion laughs", excessive nesting)
-- No dependencies; Swift 6 language mode with strict concurrency checking
+- No runtime dependencies; Swift 6 language mode with strict concurrency checking
 
 ## Installation
 
@@ -228,6 +228,9 @@ conformance tests based on a vendored snapshot of the YAML test suite. For every
 the suite, the tests verify the parsing events, the composed data (against `in.json`),
 and that emitting and serializing preserve the content. The snapshot can be updated with
 `Scripts/update-yaml-test-suite.sh`.
+
+The tests use [DynamicJSON](https://github.com/objecthub/swift-dynamicjson) to read the expected
+JSON data. It is a test-only dependency: packages that depend on YamlKit neither fetch nor link it.
 
 ## Requirements
 

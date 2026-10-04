@@ -6,6 +6,7 @@
 //  Version 2.0. See LICENSE for details.
 //
 
+import DynamicJSON
 import Foundation
 import Testing
 @testable import YamlKit
@@ -40,8 +41,8 @@ struct YAMLTestSuiteTests {
   @Test("Composing nodes", arguments: TestSuiteCase.withJSON)
   func composeNodes(_ testCase: TestSuiteCase) throws {
     let nodes = try YAML.parseAll(testCase.yaml)
-    let expected = try JSONValue.parseStream(testCase.json ?? "")
-    #expect(nodes.map(JSONValue.init) == expected)
+    let expected = try JSON.parseStream(testCase.json ?? "").map(\.withNormalizedNumbers)
+    #expect(nodes.map { JSON($0).withNormalizedNumbers } == expected)
   }
 
   /// Emits the events of every valid input, parses the output again, and

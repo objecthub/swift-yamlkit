@@ -20,6 +20,10 @@ let package = Package(
   products: [
     .library(name: "YamlKit", targets: ["YamlKit"])
   ],
+  dependencies: [
+    // Only used by the tests; packages depending on YamlKit do not fetch it.
+    .package(url: "https://github.com/objecthub/swift-dynamicjson.git", from: "1.0.2")
+  ],
   targets: [
     .target(
       name: "YamlKit",
@@ -27,7 +31,10 @@ let package = Package(
     ),
     .testTarget(
       name: "YamlKitTests",
-      dependencies: ["YamlKit"],
+      dependencies: [
+        "YamlKit",
+        .product(name: "DynamicJSON", package: "swift-dynamicjson")
+      ],
       path: "Tests/YamlKitTests",
       resources: [
         .copy("Resources/yaml-test-suite")
