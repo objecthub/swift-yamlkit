@@ -1,4 +1,4 @@
-# swift-yamlkit
+# Swift YamlKit
 
 YamlKit is a pure Swift implementation of [YAML 1.2.2](https://yaml.org/spec/1.2.2/) for
 macOS and iOS. It provides `YAMLDecoder` and `YAMLEncoder`, which plug into Swift's
@@ -14,11 +14,6 @@ for working with YAML node trees and event streams.
 - UTF-8, UTF-16, and UTF-32 input with automatic encoding detection
 - Protection against malicious input ("billion laughs", excessive nesting)
 - No dependencies; Swift 6 language mode with strict concurrency checking
-
-## Requirements
-
-- Swift 6.0 or later
-- macOS 13 or later, iOS 16 or later
 
 ## Installation
 
@@ -230,7 +225,21 @@ the suite, the tests verify the parsing events, the composed data (against `in.j
 and that emitting and serializing preserve the content. The snapshot can be updated with
 `Scripts/update-yaml-test-suite.sh`.
 
+## Requirements
+
+The following technologies are needed to build the _YamlKit_ framework.
+The framework can both be built either using _Xcode_ or the _Swift Package Manager_.
+
+- [Swift 6](https://developer.apple.com/swift/)
+- [Swift Package Manager](https://swift.org/package-manager/)
+- macOS 13 or later, iOS 16 or later
+
 ## License
 
 YamlKit is distributed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
-The vendored YAML test suite data is distributed under the MIT license by its authors.
+The YAML test suite data is distributed under the MIT license by its authors.
+
+## Copyright
+
+Author: Matthias Zenger (<matthias@objecthub.com>)  
+Copyright © 2026 Matthias Zenger. All rights reserved.
