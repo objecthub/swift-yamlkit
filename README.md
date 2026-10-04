@@ -85,13 +85,17 @@ replicas: 3
 
 ```swift
 let decoder = YAMLDecoder()
-decoder.keyDecodingStrategy = .convertFromKebabCase      // runs-on → runsOn
-decoder.dateDecodingStrategy = .timestamp                // 2001-12-14t21:59:43.10-05:00
-decoder.parseOptions.resolvesMergeKeys = true            // <<: *defaults
+// runs-on → runsOn
+decoder.keyDecodingStrategy = .convertFromKebabCase
+// 2001-12-14t21:59:43.10-05:00
+decoder.dateDecodingStrategy = .timestamp
+// <<: *defaults
+decoder.parseOptions.resolvesMergeKeys = true
 
 let encoder = YAMLEncoder()
 encoder.keyEncodingStrategy = .convertToSnakeCase
-encoder.outputFormatting = [.explicitDocumentStart, .indentlessSequences]
+encoder.outputFormatting = [.explicitDocumentStart,
+                            .indentlessSequences]
 encoder.indentation = 4
 ```
 
@@ -154,11 +158,11 @@ runs the `docc` tool of the Swift toolchain (found on the `PATH`, or via `xcrun`
 the package needs no documentation plugin dependency:
 
 ```sh
-Scripts/build-documentation.sh archive    # .build/YamlKit.doccarchive
-Scripts/build-documentation.sh preview    # live preview at http://localhost:8080/documentation/yamlkit
+# .build/YamlKit.doccarchive
+Scripts/build-documentation.sh archive
+# live preview at http://localhost:8080/documentation/yamlkit
+Scripts/build-documentation.sh preview
 ```
-
-### Static Website
 
 To publish the documentation on a static web server such as GitHub Pages, run:
 
@@ -194,7 +198,7 @@ YamlKit is a plain Swift package; there is no separate Xcode project. Open the p
 directly in Xcode:
 
 ```sh
-xed .        # or: open Package.swift, or File ▸ Open… and select the package folder
+xed .   # or: open Package.swift, or File ▸ Open… and select the package folder
 ```
 
 Select the shared `swift-yamlkit` scheme (it is versioned in
