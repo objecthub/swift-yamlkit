@@ -52,17 +52,37 @@ public struct YAMLEmitter {
     /// Should every document start with an explicit `---` marker?
     public var explicitDocumentStart: Bool
 
+    /// Should the output reproduce the choices of libyaml 0.1's emitter?
+    ///
+    /// Together with `allowsUnicode: false` and
+    /// `indentsSequencesInMappings: false`, the output is the same as
+    /// libyaml's for the same events, except that a single-quoted scalar
+    /// ending in a line break keeps an indented closing quote (libyaml's
+    /// unindented one is not valid YAML 1.2). The differences reproduced:
+    /// - empty scalars in flow collections and implicit keys are quoted;
+    /// - tabs are not printable, so scalars containing them are written
+    ///   double-quoted with `\t`;
+    /// - `?` and `:` prevent plain style in flow collections;
+    /// - an empty plain scalar is preceded by a space (`key: `);
+    /// - a top-level plain scalar is followed by `...` at the end of the
+    ///   stream, and an empty implicit document is written without `---`;
+    /// - the 128-character limit of implicit keys counts UTF-8 bytes, and
+    ///   `CR`, `NEL`, `LS` and `PS` make a key multi-line.
+    public var libYAMLCompatible: Bool
+
     /// Creates formatting options.
     public init(indentation: Int = 2,
                 lineWidth: Int = 80,
                 allowsUnicode: Bool = true,
                 indentsSequencesInMappings: Bool = true,
-                explicitDocumentStart: Bool = false) {
+                explicitDocumentStart: Bool = false,
+                libYAMLCompatible: Bool = false) {
       self.indentation = indentation
       self.lineWidth = lineWidth
       self.allowsUnicode = allowsUnicode
       self.indentsSequencesInMappings = indentsSequencesInMappings
       self.explicitDocumentStart = explicitDocumentStart
+      self.libYAMLCompatible = libYAMLCompatible
     }
   }
 
@@ -259,7 +279,7 @@ public struct YAMLEmitter {
           self.writeIndent()
         }
         var isImplicit = isImplicit && isFirst && !hasDirectives && !self.options.explicitDocumentStart
-        if isImplicit && self.isEmptyDocument() {
+        if isImplicit && !self.options.libYAMLCompatible && self.isEmptyDocument() {
           // An empty implicit document would vanish.
           isImplicit = false
         }
@@ -269,6 +289,10 @@ public struct YAMLEmitter {
         }
         self.state = .documentContent
       case .streamEnd:
+        if self.options.libYAMLCompatible && self.isOpenEnded {
+          self.writeIndicator("...", needsWhitespace: true)
+          self.writeIndent()
+        }
         self.state = .end
       default:
         throw self.error("expected document start or stream end, but found \(event.kind)")
@@ -289,7 +313,9 @@ public struct YAMLEmitter {
       self.writeIndicator("...", needsWhitespace: true)
       self.isOpenEnded = false
       self.writeIndent()
-    } else {
+    } else if !self.options.libYAMLCompatible {
+      // libyaml only considers documents ending in a top-level plain scalar
+      // open-ended (see `writePlain`).
       self.isOpenEnded = true
     }
     self.state = .documentStart(isFirst: false)
@@ -490,6 +516,9 @@ public struct YAMLEmitter {
   /// characters (YAML 1.2.2, section 7.4.2).
   private func isSimpleKey() -> Bool {
     let event = self.events[self.head]
+    if self.options.libYAMLCompatible {
+      return self.isLibYAMLSimpleKey(event)
+    }
     var length = 0
     switch event.kind {
       case .alias(let anchor):
@@ -508,6 +537,45 @@ public struct YAMLEmitter {
         return false
     }
     return length <= 128
+  }
+
+  /// libyaml's version of `isSimpleKey`: lengths are UTF-8 byte counts, a
+  /// tag counts with its shorthand handle, and all YAML 1.1 line breaks
+  /// make a scalar multi-line.
+  private func isLibYAMLSimpleKey(_ event: YAMLEvent) -> Bool {
+    var length = 0
+    switch event.kind {
+      case .alias(let anchor):
+        length = anchor.utf8.count
+      case .scalar(let value, _, let tag, let anchor):
+        var previous: (UInt8, UInt8) = (0, 0)
+        for byte in value.utf8 {
+          // LF, CR, NEL (C2 85), LS (E2 80 A8) and PS (E2 80 A9).
+          if byte == 0x0A || byte == 0x0D || (previous.1 == 0xC2 && byte == 0x85)
+              || (previous == (0xE2, 0x80) && (byte == 0xA8 || byte == 0xA9)) {
+            return false
+          }
+          previous = (previous.1, byte)
+        }
+        length = value.utf8.count + (anchor?.utf8.count ?? 0) + (tag.map(self.libYAMLTagLength) ?? 0)
+      case .sequenceStart(_, let tag, let anchor), .mappingStart(_, let tag, let anchor):
+        guard self.isEmptyCollection() else {
+          return false
+        }
+        length = (anchor?.utf8.count ?? 0) + (tag.map(self.libYAMLTagLength) ?? 0)
+      default:
+        return false
+    }
+    return length <= 128
+  }
+
+  /// The length libyaml counts for a tag: its handle and unescaped suffix.
+  private func libYAMLTagLength(_ tag: YAMLTag) -> Int {
+    let raw = tag.rawValue
+    if let best = self.bestTagDirective(for: raw) {
+      return best.handle.utf8.count + raw.utf8.count - best.prefix.utf8.count
+    }
+    return raw.utf8.count
   }
 
   // MARK: - Scalars
@@ -539,8 +607,10 @@ public struct YAMLEmitter {
     self.indent = self.indents.removeLast()
     self.state = self.states.removeLast()
     // An empty plain scalar with properties must be separated from a
-    // following value indicator, e.g. `&anchor : value`.
+    // following value indicator, e.g. `&anchor : value`. In libyaml mode,
+    // `writePlain` has written that space already.
     self.needsSpaceBeforeValueIndicator = value.isEmpty && style == .plain && hasProperties
+      && !self.options.libYAMLCompatible
   }
 
   /// Chooses the style for a scalar, honoring the requested style if the
@@ -560,6 +630,8 @@ public struct YAMLEmitter {
       } else if value.isEmpty && !hasProperties && self.flowLevel > 0 && self.isSequenceContext {
         // An empty entry of a flow sequence cannot be expressed in plain
         // style.
+        style = .singleQuoted
+      } else if value.isEmpty && self.options.libYAMLCompatible && (self.flowLevel > 0 || self.isSimpleKeyContext) {
         style = .singleQuoted
       }
     }
@@ -653,9 +725,12 @@ public struct YAMLEmitter {
             break
         }
       }
+      if self.options.libYAMLCompatible && (c == "?" || c == ":") {
+        hasFlowIndicators = true
+      }
       // NEL, LS and PS are line breaks in YAML 1.1; escape them for
       // interoperability.
-      if !YAMLEmitter.isPrintable(c) || (!c.isASCII && !self.options.allowsUnicode)
+      if !self.isPrintable(c) || (!c.isASCII && !self.options.allowsUnicode)
           || c == "\u{FEFF}" || c == "\u{85}" || c == "\u{2028}" || c == "\u{2029}" {
         hasSpecialCharacters = true
       }
@@ -737,6 +812,11 @@ public struct YAMLEmitter {
     }
   }
 
+  /// `isPrintable`, except that libyaml does not count tab as printable.
+  private func isPrintable(_ c: Unicode.Scalar) -> Bool {
+    return YAMLEmitter.isPrintable(c) && !(c == "\t" && self.options.libYAMLCompatible)
+  }
+
   // MARK: - Writing primitives
 
   private mutating func write(_ c: Unicode.Scalar) {
@@ -811,7 +891,19 @@ public struct YAMLEmitter {
       self.needsSpaceBeforeValueIndicator = true
       return
     }
-    // Find the longest matching tag directive.
+    if let best = self.bestTagDirective(for: raw) {
+      let suffix = String(raw.dropFirst(best.prefix.count))
+      self.writeIndicator(best.handle + YAMLEmitter.escapeURI(suffix, allowsAllURIChars: false),
+                          needsWhitespace: true)
+    } else {
+      self.writeIndicator("!<" + YAMLEmitter.escapeURI(raw, allowsAllURIChars: true) + ">",
+                          needsWhitespace: true)
+    }
+    self.needsSpaceBeforeValueIndicator = true
+  }
+
+  /// The tag directive with the longest prefix that `raw` extends.
+  private func bestTagDirective(for raw: String) -> TagDirective? {
     var directives = self.tagDirectives
     for directive in TagDirective.defaults
         where !directives.contains(where: { $0.handle == directive.handle }) {
@@ -823,15 +915,7 @@ public struct YAMLEmitter {
         best = directive
       }
     }
-    if let best {
-      let suffix = String(raw.dropFirst(best.prefix.count))
-      self.writeIndicator(best.handle + YAMLEmitter.escapeURI(suffix, allowsAllURIChars: false),
-                          needsWhitespace: true)
-    } else {
-      self.writeIndicator("!<" + YAMLEmitter.escapeURI(raw, allowsAllURIChars: true) + ">",
-                          needsWhitespace: true)
-    }
-    self.needsSpaceBeforeValueIndicator = true
+    return best
   }
 
   /// Percent-encodes all characters of `string` that are not allowed in a
@@ -876,7 +960,7 @@ public struct YAMLEmitter {
   // MARK: - Writing scalars
 
   private mutating func writePlain(_ value: String, allowsBreaks: Bool) {
-    if !self.isWhitespace && !value.isEmpty {
+    if !self.isWhitespace && (!value.isEmpty || self.options.libYAMLCompatible) {
       self.write(" ")
     }
     let scalars = Array(value.unicodeScalars)
@@ -897,8 +981,16 @@ public struct YAMLEmitter {
         self.isIndention = false
       }
     }
-    self.isWhitespace = self.isWhitespace && value.isEmpty
-    self.isIndention = self.isIndention && value.isEmpty
+    if self.options.libYAMLCompatible {
+      self.isWhitespace = false
+      self.isIndention = false
+      if self.isRootContext {
+        self.isOpenEnded = true
+      }
+    } else {
+      self.isWhitespace = self.isWhitespace && value.isEmpty
+      self.isIndention = self.isIndention && value.isEmpty
+    }
   }
 
   private mutating func writeSingleQuoted(_ value: String, allowsBreaks: Bool) {
@@ -938,6 +1030,8 @@ public struct YAMLEmitter {
       }
     }
     if breaks {
+      // libyaml writes the closing quote without indentation, which YAML 1.2
+      // parsers reject; this is not reproduced in libyaml mode.
       self.writeIndent()
     }
     self.writeIndicator("'", needsWhitespace: false)
@@ -953,7 +1047,7 @@ public struct YAMLEmitter {
       // white space of a line.
       let isTrimmableTab = c == "\t" && (i == 0 || i == scalars.count - 1 || atLineStart)
       atLineStart = false
-      if !YAMLEmitter.isPrintable(c) || (!self.options.allowsUnicode && !c.isASCII)
+      if !self.isPrintable(c) || (!self.options.allowsUnicode && !c.isASCII)
           || c == "\u{FEFF}" || c == "\n" || c == "\"" || c == "\\" || c == "\u{85}"
           || c == "\u{2028}" || c == "\u{2029}" || isTrimmableTab {
         self.write("\\")

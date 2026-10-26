@@ -507,6 +507,11 @@ body: |
 tags: [swift, yaml]
 ```
 
+To write the same text as libyaml 0.1 for the same events, for instance to keep files that a
+libyaml-based tool wrote unchanged, use
+`YAMLEmitter.Options(allowsUnicode: false, indentsSequencesInMappings: false, libYAMLCompatible: true)`.
+The documentation of `libYAMLCompatible` lists the differences it reproduces.
+
 Parsing and re-emitting events reformats a document while keeping its scalar styles, tags,
 anchors, and flow/block structure (comments are not part of the YAML data model and are
 dropped):
