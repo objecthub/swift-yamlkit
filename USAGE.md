@@ -507,6 +507,10 @@ body: |
 tags: [swift, yaml]
 ```
 
+`output` is the text emitted so far. `utf8Output` holds it as UTF-8 bytes, ready to be written
+to a file, and `takeUTF8Output()` returns and removes the bytes emitted since its last call, so
+that a long stream can be written out piece by piece.
+
 To write the same text as libyaml 0.1 for the same events, for instance to keep files that a
 libyaml-based tool wrote unchanged, use
 `YAMLEmitter.Options(allowsUnicode: false, indentsSequencesInMappings: false, libYAMLCompatible: true)`.
