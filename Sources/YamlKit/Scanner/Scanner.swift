@@ -114,6 +114,10 @@ struct Scanner {
   /// properties that are followed by a block collection on the same line.
   var lastQueued: (kind: Token.Kind, line: Int)? = nil
 
+  /// Spare buffers for the text of scalars (see `takeSpareText()`).
+  var spareText = ScalarText()
+  var spareWhitespaces = ScalarText()
+
   /// Creates a scanner for the given normalized input.
   init(_ input: [Unicode.Scalar]) {
     self.input = input

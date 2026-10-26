@@ -57,8 +57,8 @@ text ◀────────── YAMLEmitter ◀────────�
 
 | Path | Role |
 |---|---|
-| `Sources/YamlKit/Reader/Reader.swift` | Encoding detection (BOM / null patterns, §5.2), CRLF/CR → LF normalization, rejects non-printable chars. Output is `[Unicode.Scalar]`. |
-| `Sources/YamlKit/Scanner/` | libyaml-style tokenizer. `Scanner.swift`: token queue, indentation stack (roll/unroll), simple keys, flow stack, 1.2 tab/indent rules. `+Scalars`: plain, quoted, block scalars. `+Properties`: anchors, tags, directives. |
+| `Sources/YamlKit/Reader/Reader.swift` | Encoding detection (BOM / null patterns, §5.2), CRLF/CR → LF normalization, rejects non-printable chars. Output is `[Unicode.Scalar]`. UTF-8 is decoded in one pass over the bytes (`decodeUTF8`), which must behave like `normalize(String(data:encoding:))`: invalid UTF-8 is reported in preference to a non-printable character, and a second BOM after the first is skipped. Other encodings go through Foundation and `normalize`. |
+| `Sources/YamlKit/Scanner/` | libyaml-style tokenizer. `Scanner.swift`: token queue, indentation stack (roll/unroll), simple keys, flow stack, 1.2 tab/indent rules. `+Scalars`: plain, quoted, block scalars; their text is collected as UTF-8 in `ScalarText` buffers that the scanner reuses (`takeSpareText()`) — appending to a `String.UnicodeScalarView` per character was the scanner's main cost. `+Properties`: anchors, tags, directives. |
 | `Sources/YamlKit/Parser/` | `YAMLParser` — pull-based, non-recursive LL(1) state machine (`State` enum + `states` stack). `YAMLEvent`. Tag handle resolution + percent-decoding happen here. |
 | `Sources/YamlKit/Node/` | `YAMLNode` (enum: `.scalar/.sequence/.mapping`) and `Composer` (iterative; tag resolution via schema, alias substitution, duplicate keys, merge keys, alias-expansion limit). |
 | `Sources/YamlKit/Schema/YAMLSchema.swift` | `YAMLSchema` protocol + `CoreSchema` (default), `JSONSchema`, `FailsafeSchema`; numeric parsing helpers (`CoreSchema.parseInteger/parseFloat`). |

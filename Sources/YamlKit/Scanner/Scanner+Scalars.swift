@@ -8,6 +8,25 @@
 
 extension Scanner {
 
+  // MARK: - Text buffers
+
+  /// Returns the spare buffer for the text of a scalar, emptied; scanners
+  /// hand it back when they are done so that its storage is reused.
+  mutating func takeSpareText() -> ScalarText {
+    var text = self.spareText
+    self.spareText = ScalarText()
+    text.removeAll()
+    return text
+  }
+
+  /// Returns the spare buffer for pending white space, emptied.
+  mutating func takeSpareWhitespaces() -> ScalarText {
+    var text = self.spareWhitespaces
+    self.spareWhitespaces = ScalarText()
+    text.removeAll()
+    return text
+  }
+
   // MARK: - Plain scalars (YAML 1.2.2, section 7.3.3)
 
   /// Scans a plain scalar, folding line breaks according to production
@@ -15,8 +34,8 @@ extension Scanner {
   mutating func scanPlainScalar() throws -> Token {
     let start = self.mark
     var end = self.mark
-    var string = String.UnicodeScalarView()
-    var whitespaces = String.UnicodeScalarView()
+    var string = self.takeSpareText()
+    var whitespaces = self.takeSpareWhitespaces()
     var trailingBreaks = 0
     var leadingBlanks = false
     let indent = self.indent + 1
@@ -55,8 +74,10 @@ extension Scanner {
         }
         string.append(c)
         self.advance()
-        end = self.mark
         consumed = true
+      }
+      if consumed {
+        end = self.mark
       }
       if !consumed && !leadingBlanks && string.isEmpty {
         break
@@ -108,7 +129,10 @@ extension Scanner {
     if leadingBlanks {
       self.simpleKeyAllowed = true
     }
-    return Token(kind: .scalar(String(string), .plain), start: start, end: end)
+    let token = Token(kind: .scalar(String(string), .plain), start: start, end: end)
+    self.spareText = string
+    self.spareWhitespaces = whitespaces
+    return token
   }
 
   // MARK: - Quoted scalars (YAML 1.2.2, sections 7.3.1 and 7.3.2)
@@ -118,8 +142,8 @@ extension Scanner {
     let start = self.mark
     let quote: Unicode.Scalar = isDoubleQuoted ? "\"" : "'"
     self.advance()
-    var string = String.UnicodeScalarView()
-    var whitespaces = String.UnicodeScalarView()
+    var string = self.takeSpareText()
+    var whitespaces = self.takeSpareWhitespaces()
     var trailingBreaks = 0
     var hasLeadingBreak = false
     while true {
@@ -198,14 +222,17 @@ extension Scanner {
       }
     }
     self.advance()
-    return Token(kind: .scalar(String(string), isDoubleQuoted ? .doubleQuoted : .singleQuoted),
-                 start: start,
-                 end: self.mark)
+    let token = Token(kind: .scalar(String(string), isDoubleQuoted ? .doubleQuoted : .singleQuoted),
+                      start: start,
+                      end: self.mark)
+    self.spareText = string
+    self.spareWhitespaces = whitespaces
+    return token
   }
 
   /// Scans an escape sequence (production [62] `c-ns-esc-char`) of a
   /// double-quoted scalar.
-  mutating func scanEscapeSequence(into string: inout String.UnicodeScalarView) throws {
+  mutating func scanEscapeSequence(into string: inout ScalarText) throws {
     let start = self.mark
     self.advance()
     let c = self.peek()
@@ -330,7 +357,7 @@ extension Scanner {
     } else {
       contentIndent = try self.detectBlockScalarIndentation(minimum: minIndent)
     }
-    var string = String.UnicodeScalarView()
+    var string = self.takeSpareText()
     var trailingBreaks = 0
     var hasLeadingBreak = false
     var leadingBlank = false
@@ -422,9 +449,11 @@ extension Scanner {
           string.append("\n")
         }
     }
-    return Token(kind: .scalar(String(string), isLiteral ? .literal : .folded),
-                 start: start,
-                 end: end)
+    let token = Token(kind: .scalar(String(string), isLiteral ? .literal : .folded),
+                      start: start,
+                      end: end)
+    self.spareText = string
+    return token
   }
 
   /// Determines the content indentation of a block scalar without an

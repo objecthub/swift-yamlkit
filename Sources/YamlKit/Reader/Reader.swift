@@ -24,48 +24,157 @@ enum Reader {
 
   /// Decodes `data` into a normalized array of Unicode scalars.
   static func decode(_ data: Data) throws -> [Unicode.Scalar] {
-    let bytes = [UInt8](data)
-    let (encoding, bomLength) = Reader.detectEncoding(bytes)
-    let payload = Data(bytes[bomLength...])
+    let (encoding, bomLength) = Reader.detectEncoding([UInt8](data.prefix(4)))
+    if encoding == .utf8 {
+      return try Reader.decodeUTF8(data.dropFirst(bomLength))
+    }
+    let payload = Data(data.dropFirst(bomLength))
     guard let string = String(data: payload, encoding: encoding) else {
       throw YAMLError(.reader, "input is not valid \(Reader.name(of: encoding))")
     }
     return try Reader.normalize(string)
   }
 
+  /// Decodes and normalizes UTF-8 in one pass; the same as
+  /// `normalize(String(data: payload, encoding: .utf8))`: invalid UTF-8 is
+  /// reported in preference to a non-printable character, and a byte order
+  /// mark at the start of `payload` is skipped as Foundation does.
+  private static func decodeUTF8(_ payload: Data) throws -> [Unicode.Scalar] {
+    return try payload.withUnsafeBytes { raw in
+      let bytes = raw.bindMemory(to: UInt8.self)
+      // The first non-printable character; after it, the input is only
+      // validated.
+      var nonPrintable: Unicode.Scalar? = nil
+      let result = try [Unicode.Scalar](unsafeUninitializedCapacity: bytes.count) { buffer, count in
+        var i = 0
+        if bytes.count >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+          i = 3
+        }
+        var previousWasCR = false
+        while i < bytes.count {
+          let scalar: Unicode.Scalar
+          if bytes[i] < 0x80 {
+            scalar = Unicode.Scalar(bytes[i])
+            i += 1
+          } else if let (value, length) = Reader.decodeMultiByte(bytes, at: i),
+                    let multiByteScalar = Unicode.Scalar(value) {
+            scalar = multiByteScalar
+            i += length
+          } else {
+            throw YAMLError(.reader, "input is not valid UTF-8")
+          }
+          if nonPrintable != nil {
+            continue
+          }
+          if scalar == "\r" {
+            buffer[count] = "\n"
+            count += 1
+            previousWasCR = true
+            continue
+          } else if scalar == "\n" && previousWasCR {
+            previousWasCR = false
+            continue
+          }
+          previousWasCR = false
+          guard Reader.isPrintable(scalar) else {
+            nonPrintable = scalar
+            continue
+          }
+          buffer[count] = scalar
+          count += 1
+        }
+      }
+      if let nonPrintable {
+        // `result` ends before the character; derive its line and column.
+        let lineStart = (result.lastIndex(of: "\n") ?? -1) + 1
+        let line = 1 + result.reduce(0) { $0 + ($1 == "\n" ? 1 : 0) }
+        throw YAMLError(.reader,
+                        "invalid character U+\(String(nonPrintable.value, radix: 16, uppercase: true))",
+                        at: Mark(offset: result.count, line: line, column: result.count - lineStart + 1))
+      }
+      return result
+    }
+  }
+
+  /// Decodes the multi-byte sequence starting at `i`; returns `nil` if it is
+  /// not well-formed (The Unicode Standard, table 3-7).
+  @inline(__always)
+  private static func decodeMultiByte(_ bytes: UnsafeBufferPointer<UInt8>, at i: Int) -> (UInt32, Int)? {
+    let first = bytes[i]
+    func continuation(_ k: Int, _ low: UInt8 = 0x80, _ high: UInt8 = 0xBF) -> UInt32? {
+      guard i + k < bytes.count, bytes[i + k] >= low, bytes[i + k] <= high else {
+        return nil
+      }
+      return UInt32(bytes[i + k] & 0x3F)
+    }
+    switch first {
+      case 0xC2...0xDF:
+        guard let c1 = continuation(1) else {
+          return nil
+        }
+        return ((UInt32(first & 0x1F) << 6) | c1, 2)
+      case 0xE0...0xEF:
+        let low: UInt8 = first == 0xE0 ? 0xA0 : 0x80
+        let high: UInt8 = first == 0xED ? 0x9F : 0xBF
+        guard let c1 = continuation(1, low, high), let c2 = continuation(2) else {
+          return nil
+        }
+        return ((UInt32(first & 0x0F) << 12) | (c1 << 6) | c2, 3)
+      case 0xF0...0xF4:
+        let low: UInt8 = first == 0xF0 ? 0x90 : 0x80
+        let high: UInt8 = first == 0xF4 ? 0x8F : 0xBF
+        guard let c1 = continuation(1, low, high), let c2 = continuation(2), let c3 = continuation(3) else {
+          return nil
+        }
+        return ((UInt32(first & 0x07) << 18) | (c1 << 12) | (c2 << 6) | c3, 4)
+      default:
+        return nil
+    }
+  }
+
   /// Converts `string` into a normalized array of Unicode scalars.
   static func normalize(_ string: String) throws -> [Unicode.Scalar] {
+    var normalizer = Normalizer()
+    normalizer.result.reserveCapacity(string.utf8.count)
+    for scalar in string.unicodeScalars {
+      try normalizer.add(scalar)
+    }
+    return normalizer.result
+  }
+
+  /// Normalizes line breaks and checks that all characters are printable.
+  private struct Normalizer {
     var result: [Unicode.Scalar] = []
-    result.reserveCapacity(string.unicodeScalars.count)
     var line = 1
     var column = 1
     var previousWasCR = false
-    for scalar in string.unicodeScalars {
+
+    @inline(__always)
+    mutating func add(_ scalar: Unicode.Scalar) throws {
       if scalar == "\r" {
-        result.append("\n")
-        previousWasCR = true
-        line += 1
-        column = 1
-        continue
-      } else if scalar == "\n" && previousWasCR {
-        previousWasCR = false
-        continue
+        self.result.append("\n")
+        self.previousWasCR = true
+        self.line += 1
+        self.column = 1
+        return
+      } else if scalar == "\n" && self.previousWasCR {
+        self.previousWasCR = false
+        return
       }
-      previousWasCR = false
+      self.previousWasCR = false
       guard Reader.isPrintable(scalar) else {
         throw YAMLError(.reader,
                         "invalid character U+\(String(scalar.value, radix: 16, uppercase: true))",
-                        at: Mark(offset: result.count, line: line, column: column))
+                        at: Mark(offset: self.result.count, line: self.line, column: self.column))
       }
-      result.append(scalar)
+      self.result.append(scalar)
       if scalar == "\n" {
-        line += 1
-        column = 1
+        self.line += 1
+        self.column = 1
       } else {
-        column += 1
+        self.column += 1
       }
     }
-    return result
   }
 
   /// Returns `true` if `scalar` matches production [1] `c-printable`.
