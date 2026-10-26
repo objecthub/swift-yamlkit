@@ -429,6 +429,9 @@ print(flags["enabled"]!, flags["verbose"]!)   // true false
 | `resolvesMergeKeys` | `false` | expand `<<` merge keys |
 | `maximumAliasExpansion` | 1,000,000 | maximum number of nodes copied by aliases ("billion laughs" protection) |
 | `maximumDepth` | 512 | maximum nesting depth of collections |
+| `allowsUnindentedClosingQuote` | `false` | accept the unindented closing quote that libyaml 0.1 writes after a line break in a single-quoted scalar (YAML 1.2 requires it to be indented) |
+
+`YAMLParser`'s initializers take `maximumDepth` and `allowsUnindentedClosingQuote` directly.
 
 ---
 

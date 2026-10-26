@@ -198,8 +198,13 @@ extension Scanner {
         self.advance()
       }
       // Continuation lines must be indented (production [69]
-      // `s-flow-line-prefix(n)`).
-      if leadingBlanks && self.peek() != "\0" && !self.isAtDocumentIndicator {
+      // `s-flow-line-prefix(n)`). libyaml 0.1 writes the closing quote of a
+      // single-quoted scalar that ends in a line break without indentation;
+      // that line is accepted if `allowsUnindentedClosingQuote` is set. An
+      // escaped quote (`''`) does not close the scalar.
+      let isUnindentedClosingQuoteAllowed = self.allowsUnindentedClosingQuote && self.peek() == quote
+        && (isDoubleQuoted || self.peek(1) != "'")
+      if leadingBlanks && self.peek() != "\0" && !self.isAtDocumentIndicator && !isUnindentedClosingQuoteAllowed {
         let prefix = self.linePrefix()
         if prefix.isBlank && prefix.spaces <= self.indent {
           throw self.error("insufficient indentation of quoted scalar continuation line")
