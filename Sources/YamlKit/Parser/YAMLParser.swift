@@ -79,8 +79,22 @@ public struct YAMLParser {
   ///   - string: The YAML text.
   ///   - maximumDepth: The maximum nesting depth of collections. Exceeding
   ///     it raises a ``YAMLError/Kind/limitExceeded`` error.
-  public init(string: String, maximumDepth: Int = 512) throws {
-    self.scanner = Scanner(try Reader.normalize(string))
+  ///   - allowsUnindentedClosingQuote: Should a continuation line of a
+  ///     quoted scalar be accepted although it is not indented enough, if it
+  ///     starts with the closing quote? libyaml 0.1 writes a single-quoted
+  ///     scalar that ends in a line break like this:
+  ///
+  ///     ```yaml
+  ///     outer:
+  ///       key: 'text
+  ///
+  ///     '
+  ///     ```
+  ///
+  ///     YAML 1.2 requires the closing quote to be indented; set this to
+  ///     read such documents.
+  public init(string: String, maximumDepth: Int = 512, allowsUnindentedClosingQuote: Bool = false) throws {
+    self.scanner = Scanner(try Reader.normalize(string), allowsUnindentedClosingQuote: allowsUnindentedClosingQuote)
     self.maximumDepth = maximumDepth
   }
 
@@ -90,8 +104,10 @@ public struct YAMLParser {
   /// - Parameters:
   ///   - data: The encoded YAML text.
   ///   - maximumDepth: The maximum nesting depth of collections.
-  public init(data: Data, maximumDepth: Int = 512) throws {
-    self.scanner = Scanner(try Reader.decode(data))
+  ///   - allowsUnindentedClosingQuote: Should libyaml's unindented closing
+  ///     quotes be accepted (see ``init(string:maximumDepth:allowsUnindentedClosingQuote:)``)?
+  public init(data: Data, maximumDepth: Int = 512, allowsUnindentedClosingQuote: Bool = false) throws {
+    self.scanner = Scanner(try Reader.decode(data), allowsUnindentedClosingQuote: allowsUnindentedClosingQuote)
     self.maximumDepth = maximumDepth
   }
 

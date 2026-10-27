@@ -52,17 +52,37 @@ public struct YAMLEmitter {
     /// Should every document start with an explicit `---` marker?
     public var explicitDocumentStart: Bool
 
+    /// Should the output reproduce the choices of libyaml 0.1's emitter?
+    ///
+    /// Together with `allowsUnicode: false` and
+    /// `indentsSequencesInMappings: false`, the output is the same as
+    /// libyaml's for the same events, except that a single-quoted scalar
+    /// ending in a line break keeps an indented closing quote (libyaml's
+    /// unindented one is not valid YAML 1.2). The differences reproduced:
+    /// - empty scalars in flow collections and implicit keys are quoted;
+    /// - tabs are not printable, so scalars containing them are written
+    ///   double-quoted with `\t`;
+    /// - `?` and `:` prevent plain style in flow collections;
+    /// - an empty plain scalar is preceded by a space (`key: `);
+    /// - a top-level plain scalar is followed by `...` at the end of the
+    ///   stream, and an empty implicit document is written without `---`;
+    /// - the 128-character limit of implicit keys counts UTF-8 bytes, and
+    ///   `CR`, `NEL`, `LS` and `PS` make a key multi-line.
+    public var libYAMLCompatible: Bool
+
     /// Creates formatting options.
     public init(indentation: Int = 2,
                 lineWidth: Int = 80,
                 allowsUnicode: Bool = true,
                 indentsSequencesInMappings: Bool = true,
-                explicitDocumentStart: Bool = false) {
+                explicitDocumentStart: Bool = false,
+                libYAMLCompatible: Bool = false) {
       self.indentation = indentation
       self.lineWidth = lineWidth
       self.allowsUnicode = allowsUnicode
       self.indentsSequencesInMappings = indentsSequencesInMappings
       self.explicitDocumentStart = explicitDocumentStart
+      self.libYAMLCompatible = libYAMLCompatible
     }
   }
 
@@ -94,7 +114,25 @@ public struct YAMLEmitter {
   public let options: Options
 
   /// The text emitted so far.
-  public private(set) var output = ""
+  public var output: String {
+    return String(decoding: self.utf8Output, as: UTF8.self)
+  }
+
+  /// The text emitted so far, encoded in UTF-8.
+  public private(set) var utf8Output: [UInt8] = []
+
+  /// Returns the text emitted since the last call, encoded in UTF-8, and
+  /// removes it from `utf8Output`; for writing the output incrementally.
+  public mutating func takeUTF8Output() -> [UInt8] {
+    defer {
+      self.utf8Output.removeAll(keepingCapacity: true)
+    }
+    return self.utf8Output
+  }
+
+  /// The Unicode scalars of the scalar being written; kept to reuse its
+  /// storage.
+  private var scalarBuffer: [Unicode.Scalar] = []
 
   // MARK: - State
 
@@ -259,7 +297,7 @@ public struct YAMLEmitter {
           self.writeIndent()
         }
         var isImplicit = isImplicit && isFirst && !hasDirectives && !self.options.explicitDocumentStart
-        if isImplicit && self.isEmptyDocument() {
+        if isImplicit && !self.options.libYAMLCompatible && self.isEmptyDocument() {
           // An empty implicit document would vanish.
           isImplicit = false
         }
@@ -269,6 +307,10 @@ public struct YAMLEmitter {
         }
         self.state = .documentContent
       case .streamEnd:
+        if self.options.libYAMLCompatible && self.isOpenEnded {
+          self.writeIndicator("...", needsWhitespace: true)
+          self.writeIndent()
+        }
         self.state = .end
       default:
         throw self.error("expected document start or stream end, but found \(event.kind)")
@@ -289,7 +331,9 @@ public struct YAMLEmitter {
       self.writeIndicator("...", needsWhitespace: true)
       self.isOpenEnded = false
       self.writeIndent()
-    } else {
+    } else if !self.options.libYAMLCompatible {
+      // libyaml only considers documents ending in a top-level plain scalar
+      // open-ended (see `writePlain`).
       self.isOpenEnded = true
     }
     self.state = .documentStart(isFirst: false)
@@ -490,15 +534,22 @@ public struct YAMLEmitter {
   /// characters (YAML 1.2.2, section 7.4.2).
   private func isSimpleKey() -> Bool {
     let event = self.events[self.head]
+    if self.options.libYAMLCompatible {
+      return self.isLibYAMLSimpleKey(event)
+    }
     var length = 0
     switch event.kind {
       case .alias(let anchor):
         length = anchor.count
       case .scalar(let value, _, let tag, let anchor):
-        if value.contains(where: { $0 == "\n" || $0 == "\r\n" }) {
+        // The line breaks "\n" and "\r\n" both contain LF.
+        if value.utf8.contains(0x0A) {
           return false
         }
-        length = value.unicodeScalars.count + (anchor?.count ?? 0) + (tag?.rawValue.count ?? 0)
+        // The number of Unicode scalars: UTF-8 bytes other than continuation
+        // bytes.
+        let scalarCount = value.utf8.reduce(0) { $0 + ($1 & 0xC0 != 0x80 ? 1 : 0) }
+        length = scalarCount + (anchor?.count ?? 0) + (tag?.rawValue.count ?? 0)
       case .sequenceStart(_, let tag, let anchor), .mappingStart(_, let tag, let anchor):
         guard self.isEmptyCollection() else {
           return false
@@ -510,12 +561,52 @@ public struct YAMLEmitter {
     return length <= 128
   }
 
+  /// libyaml's version of `isSimpleKey`: lengths are UTF-8 byte counts, a
+  /// tag counts with its shorthand handle, and all YAML 1.1 line breaks
+  /// make a scalar multi-line.
+  private func isLibYAMLSimpleKey(_ event: YAMLEvent) -> Bool {
+    var length = 0
+    switch event.kind {
+      case .alias(let anchor):
+        length = anchor.utf8.count
+      case .scalar(let value, _, let tag, let anchor):
+        var previous: (UInt8, UInt8) = (0, 0)
+        for byte in value.utf8 {
+          // LF, CR, NEL (C2 85), LS (E2 80 A8) and PS (E2 80 A9).
+          if byte == 0x0A || byte == 0x0D || (previous.1 == 0xC2 && byte == 0x85)
+              || (previous == (0xE2, 0x80) && (byte == 0xA8 || byte == 0xA9)) {
+            return false
+          }
+          previous = (previous.1, byte)
+        }
+        length = value.utf8.count + (anchor?.utf8.count ?? 0) + (tag.map(self.libYAMLTagLength) ?? 0)
+      case .sequenceStart(_, let tag, let anchor), .mappingStart(_, let tag, let anchor):
+        guard self.isEmptyCollection() else {
+          return false
+        }
+        length = (anchor?.utf8.count ?? 0) + (tag.map(self.libYAMLTagLength) ?? 0)
+      default:
+        return false
+    }
+    return length <= 128
+  }
+
+  /// The length libyaml counts for a tag: its handle and unescaped suffix.
+  private func libYAMLTagLength(_ tag: YAMLTag) -> Int {
+    let raw = tag.rawValue
+    if let best = self.bestTagDirective(for: raw) {
+      return best.handle.utf8.count + raw.utf8.count - best.prefix.utf8.count
+    }
+    return raw.utf8.count
+  }
+
   // MARK: - Scalars
 
   private mutating func emitScalar(value: String, style: ScalarStyle, tag: YAMLTag?, anchor: String?) throws {
-    let analysis = self.analyze(value)
+    let scalars = self.scalars(of: value)
+    let analysis = self.analyze(scalars)
     let hasProperties = tag != nil || anchor != nil
-    let style = self.selectStyle(style, for: value, analysis: analysis, hasProperties: hasProperties)
+    let style = self.selectStyle(style, for: scalars, analysis: analysis, hasProperties: hasProperties)
     if let anchor {
       try self.writeAnchor(anchor, indicator: "&")
     }
@@ -526,27 +617,29 @@ public struct YAMLEmitter {
     self.increaseIndent(isFlow: true)
     switch style {
       case .plain:
-        self.writePlain(value, allowsBreaks: !self.isSimpleKeyContext)
+        self.writePlain(scalars, allowsBreaks: !self.isSimpleKeyContext)
       case .singleQuoted:
-        self.writeSingleQuoted(value, allowsBreaks: !self.isSimpleKeyContext)
+        self.writeSingleQuoted(scalars, allowsBreaks: !self.isSimpleKeyContext)
       case .doubleQuoted:
-        self.writeDoubleQuoted(value, allowsBreaks: !self.isSimpleKeyContext)
+        self.writeDoubleQuoted(scalars, allowsBreaks: !self.isSimpleKeyContext)
       case .literal:
-        self.writeLiteral(value, parentIndent: parentIndent)
+        self.writeLiteral(scalars, parentIndent: parentIndent)
       case .folded:
-        self.writeFolded(value, parentIndent: parentIndent)
+        self.writeFolded(scalars, parentIndent: parentIndent)
     }
     self.indent = self.indents.removeLast()
     self.state = self.states.removeLast()
     // An empty plain scalar with properties must be separated from a
-    // following value indicator, e.g. `&anchor : value`.
+    // following value indicator, e.g. `&anchor : value`. In libyaml mode,
+    // `writePlain` has written that space already.
     self.needsSpaceBeforeValueIndicator = value.isEmpty && style == .plain && hasProperties
+      && !self.options.libYAMLCompatible
   }
 
   /// Chooses the style for a scalar, honoring the requested style if the
   /// content allows it.
   private func selectStyle(_ requested: ScalarStyle,
-                           for value: String,
+                           for value: [Unicode.Scalar],
                            analysis: ScalarAnalysis,
                            hasProperties: Bool) -> ScalarStyle {
     var style = requested
@@ -561,6 +654,8 @@ public struct YAMLEmitter {
         // An empty entry of a flow sequence cannot be expressed in plain
         // style.
         style = .singleQuoted
+      } else if value.isEmpty && self.options.libYAMLCompatible && (self.flowLevel > 0 || self.isSimpleKeyContext) {
+        style = .singleQuoted
       }
     }
     if style == .singleQuoted && !analysis.isSingleQuotedAllowed {
@@ -569,7 +664,7 @@ public struct YAMLEmitter {
     if style.isBlock {
       if !analysis.isBlockAllowed || self.flowLevel > 0 || self.isSimpleKeyContext {
         style = .doubleQuoted
-      } else if self.isRootContext, let first = value.unicodeScalars.first,
+      } else if self.isRootContext, let first = value.first,
                 Scanner.isBlank(first) || first == "\n" {
         // The indentation indicator of a top-level block scalar is
         // interpreted differently by YAML 1.1 and YAML 1.2 parsers.
@@ -580,9 +675,8 @@ public struct YAMLEmitter {
   }
 
   /// Analyzes the content of a scalar to determine the admissible styles.
-  private func analyze(_ value: String) -> ScalarAnalysis {
+  private func analyze(_ scalars: [Unicode.Scalar]) -> ScalarAnalysis {
     var analysis = ScalarAnalysis()
-    let scalars = Array(value.unicodeScalars)
     guard !scalars.isEmpty else {
       // Empty plain scalars are restricted by `selectStyle`.
       analysis.isBlockAllowed = false
@@ -600,12 +694,10 @@ public struct YAMLEmitter {
     var hasSpaceBreak = false
     var previousSpace = false
     var previousBreak = false
-    if scalars.count >= 3 {
-      let prefix = String(String.UnicodeScalarView(scalars[0..<3]))
-      if prefix == "---" || prefix == "..." {
-        hasFlowIndicators = true
-        hasBlockIndicators = true
-      }
+    if scalars.count >= 3 && (scalars[0] == "-" || scalars[0] == ".")
+        && scalars[1] == scalars[0] && scalars[2] == scalars[0] {
+      hasFlowIndicators = true
+      hasBlockIndicators = true
     }
     func isBlankOrEnd(_ i: Int) -> Bool {
       return i >= scalars.count || Scanner.isBlankOrBreakOrEnd(scalars[i])
@@ -653,9 +745,12 @@ public struct YAMLEmitter {
             break
         }
       }
+      if self.options.libYAMLCompatible && (c == "?" || c == ":") {
+        hasFlowIndicators = true
+      }
       // NEL, LS and PS are line breaks in YAML 1.1; escape them for
       // interoperability.
-      if !YAMLEmitter.isPrintable(c) || (!c.isASCII && !self.options.allowsUnicode)
+      if !self.isPrintable(c) || (!c.isASCII && !self.options.allowsUnicode)
           || c == "\u{FEFF}" || c == "\u{85}" || c == "\u{2028}" || c == "\u{2029}" {
         hasSpecialCharacters = true
       }
@@ -737,22 +832,56 @@ public struct YAMLEmitter {
     }
   }
 
+  /// `isPrintable`, except that libyaml does not count tab as printable.
+  private func isPrintable(_ c: Unicode.Scalar) -> Bool {
+    return YAMLEmitter.isPrintable(c) && !(c == "\t" && self.options.libYAMLCompatible)
+  }
+
   // MARK: - Writing primitives
 
   private mutating func write(_ c: Unicode.Scalar) {
-    self.output.unicodeScalars.append(c)
+    let value = c.value
+    if value < 0x80 {
+      self.utf8Output.append(UInt8(truncatingIfNeeded: value))
+    } else if value < 0x800 {
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0xC0 | (value >> 6)))
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0x80 | (value & 0x3F)))
+    } else if value < 0x10000 {
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0xE0 | (value >> 12)))
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0x80 | ((value >> 6) & 0x3F)))
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0x80 | (value & 0x3F)))
+    } else {
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0xF0 | (value >> 18)))
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0x80 | ((value >> 12) & 0x3F)))
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0x80 | ((value >> 6) & 0x3F)))
+      self.utf8Output.append(UInt8(truncatingIfNeeded: 0x80 | (value & 0x3F)))
+    }
     self.column += 1
   }
 
   private mutating func write(_ string: String) {
-    for c in string.unicodeScalars {
-      self.write(c)
+    for byte in string.utf8 {
+      self.utf8Output.append(byte)
+      // Count characters, not continuation bytes.
+      if byte & 0xC0 != 0x80 {
+        self.column += 1
+      }
     }
   }
 
   private mutating func writeBreak() {
-    self.output.unicodeScalars.append("\n")
+    self.utf8Output.append(0x0A)
     self.column = 0
+  }
+
+  /// Fills `scalarBuffer` with the Unicode scalars of `value` and returns it.
+  private mutating func scalars(of value: String) -> [Unicode.Scalar] {
+    self.scalarBuffer.removeAll(keepingCapacity: true)
+    self.scalarBuffer.reserveCapacity(value.utf8.count)
+    for c in value.unicodeScalars {
+      self.scalarBuffer.append(c)
+    }
+    return self.scalarBuffer
   }
 
   private mutating func increaseIndent(isFlow: Bool, isIndentless: Bool = false) {
@@ -811,7 +940,19 @@ public struct YAMLEmitter {
       self.needsSpaceBeforeValueIndicator = true
       return
     }
-    // Find the longest matching tag directive.
+    if let best = self.bestTagDirective(for: raw) {
+      let suffix = String(raw.dropFirst(best.prefix.count))
+      self.writeIndicator(best.handle + YAMLEmitter.escapeURI(suffix, allowsAllURIChars: false),
+                          needsWhitespace: true)
+    } else {
+      self.writeIndicator("!<" + YAMLEmitter.escapeURI(raw, allowsAllURIChars: true) + ">",
+                          needsWhitespace: true)
+    }
+    self.needsSpaceBeforeValueIndicator = true
+  }
+
+  /// The tag directive with the longest prefix that `raw` extends.
+  private func bestTagDirective(for raw: String) -> TagDirective? {
     var directives = self.tagDirectives
     for directive in TagDirective.defaults
         where !directives.contains(where: { $0.handle == directive.handle }) {
@@ -823,15 +964,7 @@ public struct YAMLEmitter {
         best = directive
       }
     }
-    if let best {
-      let suffix = String(raw.dropFirst(best.prefix.count))
-      self.writeIndicator(best.handle + YAMLEmitter.escapeURI(suffix, allowsAllURIChars: false),
-                          needsWhitespace: true)
-    } else {
-      self.writeIndicator("!<" + YAMLEmitter.escapeURI(raw, allowsAllURIChars: true) + ">",
-                          needsWhitespace: true)
-    }
-    self.needsSpaceBeforeValueIndicator = true
+    return best
   }
 
   /// Percent-encodes all characters of `string` that are not allowed in a
@@ -875,11 +1008,10 @@ public struct YAMLEmitter {
 
   // MARK: - Writing scalars
 
-  private mutating func writePlain(_ value: String, allowsBreaks: Bool) {
-    if !self.isWhitespace && !value.isEmpty {
+  private mutating func writePlain(_ scalars: [Unicode.Scalar], allowsBreaks: Bool) {
+    if !self.isWhitespace && (!scalars.isEmpty || self.options.libYAMLCompatible) {
       self.write(" ")
     }
-    let scalars = Array(value.unicodeScalars)
     var spaces = false
     for (i, c) in scalars.enumerated() {
       if c == " " {
@@ -897,13 +1029,20 @@ public struct YAMLEmitter {
         self.isIndention = false
       }
     }
-    self.isWhitespace = self.isWhitespace && value.isEmpty
-    self.isIndention = self.isIndention && value.isEmpty
+    if self.options.libYAMLCompatible {
+      self.isWhitespace = false
+      self.isIndention = false
+      if self.isRootContext {
+        self.isOpenEnded = true
+      }
+    } else {
+      self.isWhitespace = self.isWhitespace && scalars.isEmpty
+      self.isIndention = self.isIndention && scalars.isEmpty
+    }
   }
 
-  private mutating func writeSingleQuoted(_ value: String, allowsBreaks: Bool) {
+  private mutating func writeSingleQuoted(_ scalars: [Unicode.Scalar], allowsBreaks: Bool) {
     self.writeIndicator("'", needsWhitespace: true)
-    let scalars = Array(value.unicodeScalars)
     var spaces = false
     var breaks = false
     for (i, c) in scalars.enumerated() {
@@ -938,14 +1077,15 @@ public struct YAMLEmitter {
       }
     }
     if breaks {
+      // libyaml writes the closing quote without indentation, which YAML 1.2
+      // parsers reject; this is not reproduced in libyaml mode.
       self.writeIndent()
     }
     self.writeIndicator("'", needsWhitespace: false)
   }
 
-  private mutating func writeDoubleQuoted(_ value: String, allowsBreaks: Bool) {
+  private mutating func writeDoubleQuoted(_ scalars: [Unicode.Scalar], allowsBreaks: Bool) {
     self.writeIndicator("\"", needsWhitespace: true)
-    let scalars = Array(value.unicodeScalars)
     var spaces = false
     var atLineStart = false
     for (i, c) in scalars.enumerated() {
@@ -953,7 +1093,7 @@ public struct YAMLEmitter {
       // white space of a line.
       let isTrimmableTab = c == "\t" && (i == 0 || i == scalars.count - 1 || atLineStart)
       atLineStart = false
-      if !YAMLEmitter.isPrintable(c) || (!self.options.allowsUnicode && !c.isASCII)
+      if !self.isPrintable(c) || (!self.options.allowsUnicode && !c.isASCII)
           || c == "\u{FEFF}" || c == "\n" || c == "\"" || c == "\\" || c == "\u{85}"
           || c == "\u{2028}" || c == "\u{2029}" || isTrimmableTab {
         self.write("\\")
@@ -1007,8 +1147,7 @@ public struct YAMLEmitter {
 
   /// Writes the header of a block scalar: an indentation indicator if the
   /// content starts with a space or line break, and a chomping indicator.
-  private mutating func writeBlockScalarHints(_ value: String, parentIndent: Int) {
-    let scalars = Array(value.unicodeScalars)
+  private mutating func writeBlockScalarHints(_ scalars: [Unicode.Scalar], parentIndent: Int) {
     var hints = ""
     if let first = scalars.first, Scanner.isBlank(first) || first == "\n" {
       hints += String(self.indent - parentIndent)
@@ -1025,14 +1164,14 @@ public struct YAMLEmitter {
     }
   }
 
-  private mutating func writeLiteral(_ value: String, parentIndent: Int) {
+  private mutating func writeLiteral(_ scalars: [Unicode.Scalar], parentIndent: Int) {
     self.writeIndicator("|", needsWhitespace: true)
-    self.writeBlockScalarHints(value, parentIndent: parentIndent)
+    self.writeBlockScalarHints(scalars, parentIndent: parentIndent)
     self.writeBreak()
     self.isIndention = true
     self.isWhitespace = true
     var breaks = true
-    for c in value.unicodeScalars {
+    for c in scalars {
       if c == "\n" {
         self.writeBreak()
         self.isIndention = true
@@ -1054,13 +1193,12 @@ public struct YAMLEmitter {
     self.isWhitespace = true
   }
 
-  private mutating func writeFolded(_ value: String, parentIndent: Int) {
+  private mutating func writeFolded(_ scalars: [Unicode.Scalar], parentIndent: Int) {
     self.writeIndicator(">", needsWhitespace: true)
-    self.writeBlockScalarHints(value, parentIndent: parentIndent)
+    self.writeBlockScalarHints(scalars, parentIndent: parentIndent)
     self.writeBreak()
     self.isIndention = true
     self.isWhitespace = true
-    let scalars = Array(value.unicodeScalars)
     var breaks = true
     var leadingSpaces = true
     for (i, c) in scalars.enumerated() {
