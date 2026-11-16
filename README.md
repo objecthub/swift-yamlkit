@@ -1,5 +1,7 @@
 # Swift YamlKit
 
+[![Documentation](https://img.shields.io/badge/Documentation-DocC-red.svg?style=flat)](https://objecthub.github.io/swift-yamlkit/documentation/yamlkit/)
+
 YamlKit is a pure Swift implementation of [YAML 1.2.2](https://yaml.org/spec/1.2.2/) for
 macOS and iOS. It provides `YAMLDecoder` and `YAMLEncoder`, which plug into Swift's
 `Codable` framework just like `JSONDecoder` and `JSONEncoder`, as well as lower-level APIs
@@ -14,6 +16,8 @@ for working with YAML node trees and event streams.
 - UTF-8, UTF-16, and UTF-32 input with automatic encoding detection
 - Protection against malicious input ("billion laughs", excessive nesting)
 - No runtime dependencies; Swift 6 language mode with strict concurrency checking
+
+The API reference and articles are available as [online documentation](https://objecthub.github.io/swift-yamlkit/documentation/yamlkit/), generated with Swift-DocC.
 
 ## Installation
 
@@ -164,7 +168,22 @@ Scripts/build-documentation.sh archive
 Scripts/build-documentation.sh preview
 ```
 
-To publish the documentation on a static web server such as GitHub Pages, run:
+The documentation is published on GitHub Pages at
+<https://objecthub.github.io/swift-yamlkit/documentation/yamlkit/>. The site is served from the
+root of branch `gh-pages`. `Scripts/publish-documentation.sh` builds it and copies it into a git
+worktree of that branch in `.build/gh-pages`; it neither commits nor pushes anything:
+
+```sh
+Scripts/publish-documentation.sh
+cd .build/gh-pages
+git add -A
+git commit -m "Update the documentation site"
+git push -u origin gh-pages
+```
+
+Since the site documents the current working copy, generate it before tagging a release.
+
+To publish the documentation on any other static web server, run:
 
 ```sh
 Scripts/build-documentation.sh site swift-yamlkit

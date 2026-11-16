@@ -15,6 +15,7 @@ xcodebuild test -scheme swift-yamlkit -destination 'platform=macOS'   # tests vi
 xcodebuild docbuild -scheme swift-yamlkit -destination 'generic/platform=macOS'   # must stay warning-free
 Scripts/build-documentation.sh archive       # DocC without Xcode → .build/YamlKit.doccarchive
 Scripts/build-documentation.sh site swift-yamlkit   # static website → .build/docs-site (arg = hosting base path)
+Scripts/publish-documentation.sh            # site → .build/gh-pages worktree (branch gh-pages; never commits/pushes)
 Scripts/build-documentation.sh preview       # live preview at http://localhost:8080/documentation/yamlkit
 Scripts/update-yaml-test-suite.sh [data-YYYY-MM-DD]   # refresh vendored test suite (default data-2022-01-17)
 ```
