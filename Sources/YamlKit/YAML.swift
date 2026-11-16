@@ -56,17 +56,23 @@ public enum YAML {
     /// threads.
     public var maximumDepth: Int
 
+    /// Should libyaml's unindented closing quotes be accepted (see
+    /// ``YAMLParser/init(string:maximumDepth:allowsUnindentedClosingQuote:)``)?
+    public var allowsUnindentedClosingQuote: Bool
+
     /// Creates parse options.
     public init(schema: any YAMLSchema = CoreSchema(),
                 allowsDuplicateKeys: Bool = false,
                 resolvesMergeKeys: Bool = false,
                 maximumAliasExpansion: Int = 1_000_000,
-                maximumDepth: Int = 512) {
+                maximumDepth: Int = 512,
+                allowsUnindentedClosingQuote: Bool = false) {
       self.schema = schema
       self.allowsDuplicateKeys = allowsDuplicateKeys
       self.resolvesMergeKeys = resolvesMergeKeys
       self.maximumAliasExpansion = maximumAliasExpansion
       self.maximumDepth = maximumDepth
+      self.allowsUnindentedClosingQuote = allowsUnindentedClosingQuote
     }
   }
 
@@ -116,7 +122,8 @@ public enum YAML {
   /// Parses a stream consisting of at most one document and returns its
   /// root node, or `nil` if the stream contains no document.
   public static func parse(_ yaml: String, options: ParseOptions = ParseOptions()) throws -> YAMLNode? {
-    let parser = try YAMLParser(string: yaml, maximumDepth: options.maximumDepth)
+    let parser = try YAMLParser(string: yaml, maximumDepth: options.maximumDepth,
+                                allowsUnindentedClosingQuote: options.allowsUnindentedClosingQuote)
     return try YAML.single(parser, options: options)
   }
 
@@ -124,13 +131,15 @@ public enum YAML {
   /// root node, or `nil` if the stream contains no document. The character
   /// encoding is detected automatically.
   public static func parse(_ data: Data, options: ParseOptions = ParseOptions()) throws -> YAMLNode? {
-    let parser = try YAMLParser(data: data, maximumDepth: options.maximumDepth)
+    let parser = try YAMLParser(data: data, maximumDepth: options.maximumDepth,
+                                allowsUnindentedClosingQuote: options.allowsUnindentedClosingQuote)
     return try YAML.single(parser, options: options)
   }
 
   /// Parses all documents of a stream.
   public static func parseAll(_ yaml: String, options: ParseOptions = ParseOptions()) throws -> [YAMLNode] {
-    let parser = try YAMLParser(string: yaml, maximumDepth: options.maximumDepth)
+    let parser = try YAMLParser(string: yaml, maximumDepth: options.maximumDepth,
+                                allowsUnindentedClosingQuote: options.allowsUnindentedClosingQuote)
     var composer = Composer(parser: parser, options: options)
     return try composer.allDocuments()
   }
@@ -138,7 +147,8 @@ public enum YAML {
   /// Parses all documents of a stream. The character encoding is detected
   /// automatically.
   public static func parseAll(_ data: Data, options: ParseOptions = ParseOptions()) throws -> [YAMLNode] {
-    let parser = try YAMLParser(data: data, maximumDepth: options.maximumDepth)
+    let parser = try YAMLParser(data: data, maximumDepth: options.maximumDepth,
+                                allowsUnindentedClosingQuote: options.allowsUnindentedClosingQuote)
     var composer = Composer(parser: parser, options: options)
     return try composer.allDocuments()
   }

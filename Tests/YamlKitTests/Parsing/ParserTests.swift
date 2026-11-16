@@ -161,4 +161,47 @@ struct ParserTests {
     let scalar = try #require(events.first { EventFormatter.format($0) == "=VAL :b" })
     #expect(scalar.start == Mark(offset: 7, line: 2, column: 5))
   }
+
+  @Test("Unindented closing quotes as libyaml writes them")
+  func unindentedClosingQuotes() throws {
+    // libyaml 0.1 writes a single-quoted scalar ending in a line break with
+    // the closing quote at the start of the line.
+    let yaml = "outer:\n  key: 'text\n\n'\n  list:\n  - 'a\n\n'\n  next: x\n"
+    #expect(throws: YAMLError.self) {
+      _ = try YAML.parseEvents(yaml)
+    }
+    var parser = try YAMLParser(string: yaml, allowsUnindentedClosingQuote: true)
+    #expect(EventFormatter.format(try parser.parseAll()) == """
+      +STR
+      +DOC
+      +MAP
+      =VAL :outer
+      +MAP
+      =VAL :key
+      =VAL 'text\\n
+      =VAL :list
+      +SEQ
+      =VAL 'a\\n
+      -SEQ
+      =VAL :next
+      =VAL :x
+      -MAP
+      -MAP
+      -DOC
+      -STR
+
+      """)
+    var doubleQuoted = try YAMLParser(string: "outer:\n  key: \"a\n   b\n\n\"\n", allowsUnindentedClosingQuote: true)
+    #expect(EventFormatter.format(try doubleQuoted.parseAll()).contains("=VAL \"a b\\n\n"))
+    let node = try YAML.parse(yaml, options: YAML.ParseOptions(allowsUnindentedClosingQuote: true))
+    #expect(node?["outer"]?["key"]?.string == "text\n")
+    // Only the closing quote is exempt: an escaped quote continues the
+    // scalar, and other continuation lines must still be indented.
+    for invalid in ["outer:\n  key: 'a\n\n''b'\n", "outer:\n  key: 'a\nb'\n"] {
+      var lenient = try YAMLParser(string: invalid, allowsUnindentedClosingQuote: true)
+      #expect(throws: YAMLError.self) {
+        _ = try lenient.parseAll()
+      }
+    }
+  }
 }

@@ -114,9 +114,19 @@ struct Scanner {
   /// properties that are followed by a block collection on the same line.
   var lastQueued: (kind: Token.Kind, line: Int)? = nil
 
+  /// Spare buffers for the text of scalars (see `takeSpareText()`).
+  var spareText = ScalarText()
+  var spareWhitespaces = ScalarText()
+
+  /// May the closing quote of a quoted scalar start a continuation line
+  /// that is not indented enough (see
+  /// `YAMLParser.init(string:maximumDepth:allowsUnindentedClosingQuote:)`)?
+  let allowsUnindentedClosingQuote: Bool
+
   /// Creates a scanner for the given normalized input.
-  init(_ input: [Unicode.Scalar]) {
+  init(_ input: [Unicode.Scalar], allowsUnindentedClosingQuote: Bool = false) {
     self.input = input
+    self.allowsUnindentedClosingQuote = allowsUnindentedClosingQuote
   }
 
   /// The current flow nesting level.

@@ -429,6 +429,9 @@ print(flags["enabled"]!, flags["verbose"]!)   // true false
 | `resolvesMergeKeys` | `false` | expand `<<` merge keys |
 | `maximumAliasExpansion` | 1,000,000 | maximum number of nodes copied by aliases ("billion laughs" protection) |
 | `maximumDepth` | 512 | maximum nesting depth of collections |
+| `allowsUnindentedClosingQuote` | `false` | accept the unindented closing quote that libyaml 0.1 writes after a line break in a single-quoted scalar (YAML 1.2 requires it to be indented) |
+
+`YAMLParser`'s initializers take `maximumDepth` and `allowsUnindentedClosingQuote` directly.
 
 ---
 
@@ -506,6 +509,15 @@ body: |
   Line two
 tags: [swift, yaml]
 ```
+
+`output` is the text emitted so far. `utf8Output` holds it as UTF-8 bytes, ready to be written
+to a file, and `takeUTF8Output()` returns and removes the bytes emitted since its last call, so
+that a long stream can be written out piece by piece.
+
+To write the same text as libyaml 0.1 for the same events, for instance to keep files that a
+libyaml-based tool wrote unchanged, use
+`YAMLEmitter.Options(allowsUnicode: false, indentsSequencesInMappings: false, libYAMLCompatible: true)`.
+The documentation of `libYAMLCompatible` lists the differences it reproduces.
 
 Parsing and re-emitting events reformats a document while keeping its scalar styles, tags,
 anchors, and flow/block structure (comments are not part of the YAML data model and are
